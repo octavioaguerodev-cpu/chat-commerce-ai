@@ -2,6 +2,8 @@
 
 Bandeja de chats para negocios que venden por WhatsApp. Un asistente con IA (Gemini, con *function calling*) responde con el catálogo, los precios y el stock reales, arma el carrito, confirma el pedido reservando stock y manda el link de pago. Cuando el pago se aprueba, el cliente recibe la confirmación en el mismo chat. Un vendedor puede leer todo en vivo, tomar el control de la conversación y apagar el asistente.
 
+**Demo:** https://chat-commerce-ai.onrender.com (entrá a *Simulador de cliente* y escribí como si fueras un cliente). Corre en el plan gratuito de Render: si estuvo un rato sin visitas, la primera carga tarda alrededor de un minuto, y los pedidos de prueba se borran cuando el servicio se reinicia.
+
 ![Bandeja del vendedor](docs/bandeja.png)
 
 ## Probalo
