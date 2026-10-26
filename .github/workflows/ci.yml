@@ -17,3 +17,29 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  # Publica en Render solo si los tests pasaron, y falla si el deploy no queda en vivo.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: deploy-production
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_ID: srv-dbfp25gu01pc7381jijg
+    steps:
+      - name: Deploy a Render
+        run: |
+          api() { curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" "$@"; }
+          id=$(api -X POST "https://api.render.com/v1/services/$SERVICE_ID/deploys" -d "{\"commitId\":\"$GITHUB_SHA\"}" | jq -r .id)
+          echo "Deploy $id"
+          for i in $(seq 1 60); do
+            status=$(api "https://api.render.com/v1/services/$SERVICE_ID/deploys/$id" | jq -r .status)
+            echo "$status"
+            case "$status" in
+              live) exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed|deactivated) exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "El deploy no terminó en 10 minutos"; exit 1
