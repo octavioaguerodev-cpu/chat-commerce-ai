@@ -1,0 +1,26 @@
+{
+  "name": "chat-commerce-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bandeja unificada de chats con un agente que responde con catálogo y stock reales, arma el pedido y genera el link de pago.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node --watch-path=server server/index.js --dev",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.5"
+  }
+}
