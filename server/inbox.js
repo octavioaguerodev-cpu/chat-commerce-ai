@@ -15,30 +15,52 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
   const saveState = db.prepare('UPDATE conversations SET cart = ?, needs_human = ? WHERE id = ?');
   const setNeedsHuman = db.prepare('UPDATE conversations SET needs_human = ? WHERE id = ?');
 
+  const listMessages = db.prepare('SELECT id, direction, author, body, created_at FROM messages WHERE conversation_id = ? ORDER BY id');
+  const getMessage = db.prepare('SELECT body FROM messages WHERE id = ?');
+
   // Salida a WhatsApp: en modo simulado el mensaje queda guardado y el simulador lo muestra.
   const send = (conversationId, author, body) => insertMessage.run(conversationId, 'out', author, body, null);
 
+  // Un mensaje a la vez por conversación: dos mensajes seguidos no pisan el carrito del otro.
+  const queues = new Map();
+  const serialize = (id, task) => {
+    const run = (queues.get(id) ?? Promise.resolve()).then(task);
+    const tail = run.catch(() => {});
+    queues.set(id, tail);
+    tail.then(() => queues.get(id) === tail && queues.delete(id));
+    return run;
+  };
+
+  async function answer(conversationId, messageId) {
+    const conversation = getConversation.get(conversationId);
+    if (!conversation.ai_enabled) {
+      setNeedsHuman.run(1, conversationId);
+      return;
+    }
+    // Lo anterior al mensaje actual, más respuestas ya enviadas a mensajes previos que se procesaron después.
+    const history = listMessages.all(conversationId).filter((m) => m.id < messageId || m.direction === 'out');
+    try {
+      const result = await agent(db, conversation, getMessage.get(messageId).body, { publicUrl, history });
+      send(conversationId, 'ai', result.reply);
+      saveState.run(JSON.stringify(result.cart), result.needsHuman ? 1 : 0, conversationId);
+      if (result.order) emit('orders');
+    } catch (err) {
+      console.error('Falló el agente:', err);
+      setNeedsHuman.run(1, conversationId);
+    }
+  }
+
   return {
     /** Mensaje entrante del cliente. Ignora duplicados por `waId` (WhatsApp reintenta webhooks). */
-    receive({ phone, name, text, waId }) {
+    async receive({ phone, name, text, waId }) {
       const body = String(text).slice(0, MAX_BODY);
       const conversation = upsertConversation.get(phone, name || phone);
-      if (insertMessage.run(conversation.id, 'in', 'customer', body, waId ?? null).changes === 0) {
+      const inserted = insertMessage.run(conversation.id, 'in', 'customer', body, waId ?? null);
+      if (inserted.changes === 0) {
         return { duplicate: true };
       }
-      if (!conversation.ai_enabled) {
-        setNeedsHuman.run(1, conversation.id);
-      } else {
-        try {
-          const result = agent(db, conversation, body, { publicUrl });
-          send(conversation.id, 'ai', result.reply);
-          saveState.run(JSON.stringify(result.cart), result.needsHuman ? 1 : 0, conversation.id);
-          if (result.order) emit('orders');
-        } catch (err) {
-          console.error('Falló el agente:', err);
-          setNeedsHuman.run(1, conversation.id);
-        }
-      }
+      emit('inbox');
+      await serialize(conversation.id, () => answer(conversation.id, Number(inserted.lastInsertRowid)));
       emit('inbox');
       return { conversationId: conversation.id };
     },
@@ -78,7 +100,6 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
         )
         .all(),
 
-    messages: (conversationId) =>
-      db.prepare('SELECT id, direction, author, body, created_at FROM messages WHERE conversation_id = ? ORDER BY id').all(conversationId),
+    messages: (conversationId) => listMessages.all(conversationId),
   };
 }

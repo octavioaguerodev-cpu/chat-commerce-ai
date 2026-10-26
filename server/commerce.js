@@ -1,3 +1,5 @@
+import { money } from './text.js';
+
 export class OutOfStockError extends Error {
   constructor(product) {
     super(`Sin stock suficiente de ${product.name}`);
@@ -15,6 +17,27 @@ export function searchProducts(db, tokens) {
     .map((p) => ({ ...p, score: p.keywords.split(' ').filter((k) => tokens.includes(k)).length }))
     .filter((p) => p.score > 0)
     .sort((a, b) => b.score - a.score);
+}
+
+/** Suma `qty` unidades al carrito si hay stock. Devuelve `{ cart }` o `{ error }`. */
+export function addToCart(cart, product, qty) {
+  if (!Number.isInteger(qty) || qty < 1) return { error: 'La cantidad tiene que ser un número entero mayor a cero.' };
+  const inCart = cart.find((i) => i.productId === product.id);
+  const wanted = (inCart?.qty ?? 0) + qty;
+  if (product.stock === 0) return { error: `No nos queda stock de ${product.name}.` };
+  if (wanted > product.stock) return { error: `De ${product.name} solo tenemos ${product.stock}.` };
+  return {
+    cart: inCart ? cart.map((i) => (i === inCart ? { ...i, qty: wanted } : i)) : [...cart, { productId: product.id, qty }],
+  };
+}
+
+export function cartSummary(db, cart) {
+  const lines = cart.map(({ productId, qty }) => {
+    const p = getProduct(db, productId);
+    return { text: `• ${qty} × ${p.name}: ${money(p.price * qty)}`, subtotal: p.price * qty };
+  });
+  const total = lines.reduce((sum, l) => sum + l.subtotal, 0);
+  return `${lines.map((l) => l.text).join('\n')}\nTotal: ${money(total)}`;
 }
 
 /** Crea el pedido y reserva el stock en una sola transacción. */

@@ -21,18 +21,21 @@ function parseWhatsApp(payload) {
   return out;
 }
 
-export function createApp(db, { publicUrl }) {
+export function createApp(db, { publicUrl, agent }) {
   const clients = new Set();
   const emit = (type) => {
     for (const res of clients) res.write(`data: ${JSON.stringify({ type })}\n\n`);
   };
-  const inbox = createInbox(db, { publicUrl, emit });
+  const inbox = createInbox(db, { publicUrl, agent, emit });
   const app = express();
   app.use(express.json({ limit: '100kb' }));
 
+  // WhatsApp pide responder 200 rápido; la respuesta al cliente se procesa después.
   app.post('/webhook/whatsapp', (req, res) => {
-    for (const message of parseWhatsApp(req.body)) inbox.receive(message);
     res.sendStatus(200);
+    for (const message of parseWhatsApp(req.body)) {
+      inbox.receive(message).catch((err) => console.error('No se pudo procesar el mensaje:', err));
+    }
   });
 
   app.get('/api/events', (req, res) => {

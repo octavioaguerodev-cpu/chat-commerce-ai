@@ -1,8 +1,8 @@
-import { createOrder, getProduct, listProducts, OutOfStockError, searchProducts } from './commerce.js';
+import { addToCart, cartSummary, createOrder, listProducts, OutOfStockError, searchProducts } from './commerce.js';
 import { money, tokenize } from './text.js';
 
-// Agente de reglas: entiende intenciones simples y opera con las mismas funciones
-// (buscar, stock, pedido, link de pago) que va a usar el agente con LLM.
+// Agente de reglas: no necesita API key y es el respaldo cuando el LLM no está disponible.
+// Opera con las mismas funciones de negocio (buscar, carrito, pedido) que el agente con LLM.
 
 const NUMBER_WORDS = { un: 1, uno: 1, una: 1, do: 2, tre: 3, cuatro: 4, cinco: 5, sei: 6, siete: 7, ocho: 8, nueve: 9, diez: 10 };
 const HUMAN = ['humano', 'persona', 'asesor', 'vendedor', 'operador'];
@@ -23,15 +23,6 @@ function quantity(tokens, product) {
     if (NUMBER_WORDS[t]) return NUMBER_WORDS[t];
   }
   return 1;
-}
-
-function cartSummary(db, cart) {
-  const lines = cart.map(({ productId, qty }) => {
-    const p = getProduct(db, productId);
-    return { text: `• ${qty} × ${p.name}: ${money(p.price * qty)}`, subtotal: p.price * qty };
-  });
-  const total = lines.reduce((sum, l) => sum + l.subtotal, 0);
-  return `${lines.map((l) => l.text).join('\n')}\nTotal: ${money(total)}`;
 }
 
 const productLine = (p) => `• ${p.name}: ${money(p.price)} (${p.stock > 0 ? `${p.stock} en stock` : 'sin stock'})`;
@@ -75,14 +66,9 @@ export function demoAgent(db, conversation, text, { publicUrl }) {
     }
     const product = best[0];
     const qty = quantity(tokens, product);
-    const inCart = cart.find((i) => i.productId === product.id);
-    const wanted = (inCart?.qty ?? 0) + qty;
-    if (product.stock === 0) return done(`No nos queda stock de ${product.name}. ¿Te muestro otra opción?`);
-    if (wanted > product.stock) return done(`De ${product.name} solo tenemos ${product.stock}. ¿Cuántos querés?`);
-    const next = inCart
-      ? cart.map((i) => (i === inCart ? { ...i, qty: wanted } : i))
-      : [...cart, { productId: product.id, qty }];
-    return done(`Sumé ${qty} × ${product.name}.\n\nTu carrito:\n${cartSummary(db, next)}\n\nEscribí "confirmar" para generar el link de pago.`, { cart: next });
+    const added = addToCart(cart, product, qty);
+    if (added.error) return done(`${added.error} ${product.stock === 0 ? '¿Te muestro otra opción?' : '¿Cuántos querés?'}`);
+    return done(`Sumé ${qty} × ${product.name}.\n\nTu carrito:\n${cartSummary(db, added.cart)}\n\nEscribí "confirmar" para generar el link de pago.`, { cart: added.cart });
   }
 
   if (matches.length > 0) {
