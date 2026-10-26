@@ -68,6 +68,53 @@ export const markPaid = (db, orderId) =>
     .prepare("UPDATE orders SET status = 'paid', paid_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND status = 'pending' RETURNING *")
     .get(orderId);
 
+/** Vence pedidos impagos con más de `ttlMinutes` y devuelve su stock, todo en una transacción. */
+export function expireOrders(db, ttlMinutes) {
+  const restore = db.prepare('UPDATE products SET stock = stock + ? WHERE sku = ?');
+  db.exec('BEGIN');
+  try {
+    const expired = db
+      .prepare(
+        "UPDATE orders SET status = 'expired' WHERE status = 'pending' AND created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) RETURNING *",
+      )
+      .all(`-${ttlMinutes} minutes`);
+    for (const order of expired) {
+      for (const item of JSON.parse(order.items)) restore.run(item.qty, item.sku);
+    }
+    db.exec('COMMIT');
+    return expired;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+// ponytail: "hoy" en hora argentina con offset fijo (-3, sin horario de verano); usar la zona del negocio si hay multi-país.
+const TODAY = "date(created_at, '-3 hours') = date('now', '-3 hours')";
+
+/** Métricas del día para la pantalla de Inicio. */
+export function getStats(db) {
+  const one = (sql) => db.prepare(sql).get();
+  const sales = one(`SELECT COUNT(*) AS orders, COALESCE(SUM(total), 0) AS total FROM orders WHERE status = 'paid' AND ${TODAY}`);
+  const pending = one(`SELECT COUNT(*) AS orders, COALESCE(SUM(total), 0) AS total FROM orders WHERE status = 'pending'`);
+  const replies = one(
+    `SELECT COALESCE(SUM(author = 'ai'), 0) AS ai, COALESCE(SUM(author = 'agent'), 0) AS agent FROM messages WHERE direction = 'out' AND ${TODAY}`,
+  );
+  const chats = one(`SELECT COUNT(DISTINCT conversation_id) AS n FROM messages WHERE direction = 'in' AND ${TODAY}`).n;
+  const waiting = one('SELECT COUNT(*) AS n FROM conversations WHERE needs_human = 1').n;
+  const topProducts = db
+    .prepare(
+      `SELECT json_extract(i.value, '$.name') AS name, SUM(json_extract(i.value, '$.qty')) AS qty,
+              SUM(json_extract(i.value, '$.qty') * json_extract(i.value, '$.price')) AS total
+       FROM orders o, json_each(o.items) i
+       WHERE o.status = 'paid'
+       GROUP BY name ORDER BY total DESC LIMIT 5`,
+    )
+    .all();
+  const lowStock = db.prepare('SELECT name, stock FROM products WHERE stock <= 3 ORDER BY stock, name').all();
+  return { sales, pending, replies, chats, waiting, topProducts, lowStock };
+}
+
 export const getOrder = (db, id) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   return order && { ...order, items: JSON.parse(order.items) };

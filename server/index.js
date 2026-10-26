@@ -13,7 +13,7 @@ const dev = process.argv.includes('--dev');
 // Por defecto usa Gemini (tiene plan gratuito). Cualquier API compatible con OpenAI sirve cambiando estas variables.
 const apiKey = env.LLM_API_KEY ?? env.GEMINI_API_KEY;
 // El plan gratuito tiene cupo por modelo: si uno está saturado o sin cupo, se prueba el siguiente.
-const models = (env.LLM_MODELS ?? 'gemini-3.5-flash,gemini-3.1-flash-lite,gemini-3-flash-preview').split(',').map((m) => m.trim());
+const models = (env.LLM_MODELS ?? 'gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3-flash-preview').split(',').map((m) => m.trim());
 const agent = apiKey
   ? withFallback(
       createLlmAgent({
@@ -24,7 +24,11 @@ const agent = apiKey
     )
   : demoAgent;
 
-const { app } = createApp(openDb(), { publicUrl, agent });
+const { app, inbox } = createApp(openDb(), { publicUrl, agent });
+
+// Los pedidos impagos vencen y devuelven el stock reservado.
+const orderTtl = Number(env.ORDER_TTL_MINUTES ?? 30);
+setInterval(() => inbox.expireUnpaid(orderTtl), 60_000).unref();
 
 if (dev) {
   const { createServer } = await import('vite');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { demoAgent } from '../server/agent.js';
-import { listOrders, listProducts } from '../server/commerce.js';
+import { getStats, listOrders, listProducts } from '../server/commerce.js';
 import { openDb } from '../server/db.js';
 import { createInbox } from '../server/inbox.js';
 import { createLlmAgent, withFallback } from '../server/llm-agent.js';
@@ -63,6 +63,39 @@ test('no vende sin stock ni más de lo disponible', async () => {
   assert.match(await say('quiero el mate imperial'), /No nos queda stock/);
   assert.match(await say('quiero 5 kit matero completo'), /solo tenemos 3/);
   assert.match(await say('confirmar'), /carrito está vacío/);
+});
+
+test('un pedido impago vence: devuelve el stock, avisa al cliente y ya no se puede pagar', async () => {
+  const { db, inbox, say, stock } = setup();
+  await say('quiero 2 kit matero completo');
+  await say('confirmar');
+  assert.equal(stock('KIT-MAT'), 1);
+
+  assert.equal(inbox.expireUnpaid(30), 0, 'un pedido recién creado no vence');
+  assert.equal(inbox.expireUnpaid(0), 1);
+  assert.equal(stock('KIT-MAT'), 3);
+  assert.equal(listOrders(db)[0].status, 'expired');
+  assert.match(inbox.messages(1).at(-1).body, /pedido #1 venció/);
+  assert.equal(inbox.paymentApproved(1), false);
+  assert.equal(inbox.expireUnpaid(0), 0, 'no devuelve el stock dos veces');
+  assert.equal(stock('KIT-MAT'), 3);
+});
+
+test('métricas del día: ventas pagadas, pendientes y lo más vendido', async () => {
+  const { db, inbox, say } = setup();
+  await say('quiero 2 bombillas', '5491100000001');
+  await say('confirmar', '5491100000001');
+  await say('quiero 1 termo stanley', '5491100000002');
+  await say('confirmar', '5491100000002');
+  inbox.paymentApproved(1);
+
+  const s = getStats(db);
+  // node:sqlite devuelve filas sin prototipo: se copian para comparar.
+  assert.deepEqual({ ...s.sales }, { orders: 1, total: 13000 });
+  assert.deepEqual({ ...s.pending }, { orders: 1, total: 89000 });
+  assert.equal(s.chats, 2);
+  assert.deepEqual(s.topProducts.map((p) => ({ ...p })), [{ name: 'Bombilla de acero', qty: 2, total: 13000 }]);
+  assert.ok(s.lowStock.some((p) => p.name === 'Mate imperial con virola de alpaca' && p.stock === 0));
 });
 
 test('el stock se valida otra vez al confirmar', async () => {

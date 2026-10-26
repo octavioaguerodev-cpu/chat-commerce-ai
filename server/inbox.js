@@ -1,5 +1,5 @@
 import { demoAgent } from './agent.js';
-import { getOrder, markPaid } from './commerce.js';
+import { expireOrders, getOrder, markPaid } from './commerce.js';
 import { money } from './text.js';
 
 const MAX_BODY = 2000;
@@ -31,6 +31,8 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     return run;
   };
 
+  // Conversaciones que el asistente está respondiendo ahora ("escribiendo…").
+  const typing = new Set();
   async function answer(conversationId, messageId) {
     const conversation = getConversation.get(conversationId);
     if (!conversation.ai_enabled) {
@@ -39,6 +41,8 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     }
     // Lo anterior al mensaje actual, más respuestas ya enviadas a mensajes previos que se procesaron después.
     const history = listMessages.all(conversationId).filter((m) => m.id < messageId || m.direction === 'out');
+    typing.add(conversationId);
+    emit('inbox');
     try {
       const result = await agent(db, conversation, getMessage.get(messageId).body, { publicUrl, history });
       send(conversationId, 'ai', result.reply);
@@ -47,6 +51,8 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     } catch (err) {
       console.error('Falló el agente:', err);
       setNeedsHuman.run(1, conversationId);
+    } finally {
+      typing.delete(conversationId);
     }
   }
 
@@ -90,6 +96,19 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
       return true;
     },
 
+    /** Vence los pedidos impagos más viejos que `ttlMinutes`, devuelve su stock y avisa al cliente. */
+    expireUnpaid(ttlMinutes) {
+      const expired = expireOrders(db, ttlMinutes);
+      for (const order of expired) {
+        send(order.conversation_id, 'ai', `Tu pedido #${order.id} venció porque no se registró el pago. Si todavía lo querés, escribime y lo armamos de nuevo.`);
+      }
+      if (expired.length) {
+        emit('orders');
+        emit('inbox');
+      }
+      return expired.length;
+    },
+
     listConversations: () =>
       db
         .prepare(
@@ -98,7 +117,8 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
            JOIN messages m ON m.id = (SELECT MAX(id) FROM messages WHERE conversation_id = c.id)
            ORDER BY m.id DESC`,
         )
-        .all(),
+        .all()
+        .map((c) => ({ ...c, typing: typing.has(c.id) })),
 
     messages: (conversationId) => listMessages.all(conversationId),
   };

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getOrder, listOrders, listProducts } from './commerce.js';
+import { getOrder, getStats, listOrders, listProducts } from './commerce.js';
 import { createInbox } from './inbox.js';
 import { money } from './text.js';
 
@@ -63,22 +63,24 @@ export function createApp(db, { publicUrl, agent }) {
 
   app.get('/api/orders', (req, res) => res.json(listOrders(db)));
   app.get('/api/products', (req, res) => res.json(listProducts(db)));
+  app.get('/api/stats', (req, res) => res.json(getStats(db)));
 
   // Checkout simulado: reemplaza al link de Mercado Pago hasta conectar credenciales reales.
   app.get('/checkout/:id', (req, res) => {
     const order = getOrder(db, Number(req.params.id));
     if (!order) return res.status(404).send('Pedido inexistente');
     const rows = order.items.map((i) => `<li>${i.qty} × ${escapeHtml(i.name)} <b>${money(i.price * i.qty)}</b></li>`).join('');
-    const action =
-      order.status === 'paid'
-        ? '<p class="ok">✓ Pago aprobado. Ya podés volver al chat.</p>'
-        : `<form method="post" action="/checkout/${order.id}/pay"><button>Pagar ${money(order.total)}</button></form>`;
+    const action = {
+      paid: '<p class="ok">✓ Pago aprobado. Ya podés volver al chat.</p>',
+      expired: '<p class="expired">Este pedido venció. Escribinos por el chat para armarlo de nuevo.</p>',
+      pending: `<form method="post" action="/checkout/${order.id}/pay"><button>Pagar ${money(order.total)}</button></form>`,
+    }[order.status];
     res.send(`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Pedido #${order.id}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:420px;margin:48px auto;padding:0 16px;color:#1f2933}
 .card{border:1px solid #dde3ea;border-radius:12px;padding:24px}ul{padding-left:18px;line-height:1.8}
 button{width:100%;padding:12px;border:0;border-radius:8px;background:#009ee3;color:#fff;font-size:16px;cursor:pointer}
-.ok{color:#0a7d3b;font-weight:600}small{color:#6b7785}</style>
+.ok{color:#0a7d3b;font-weight:600}.expired{color:#c0392b;font-weight:600}small{color:#6b7785}</style>
 <div class="card"><small>Checkout simulado</small><h2>Pedido #${order.id}</h2><ul>${rows}</ul>
 <p>Total: <b>${money(order.total)}</b></p>${action}</div></html>`);
   });

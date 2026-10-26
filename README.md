@@ -1,10 +1,12 @@
 # Chat Commerce AI
 
+[![CI](https://github.com/octavioaguerodev-cpu/chat-commerce-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/octavioaguerodev-cpu/chat-commerce-ai/actions/workflows/ci.yml)
+
 Bandeja de chats para negocios que venden por WhatsApp. Un asistente con IA (Gemini, con *function calling*) responde con el catálogo, los precios y el stock reales, arma el carrito, confirma el pedido reservando stock y manda el link de pago. Cuando el pago se aprueba, el cliente recibe la confirmación en el mismo chat. Un vendedor puede leer todo en vivo, tomar el control de la conversación y apagar el asistente.
 
 **Demo:** https://chat-commerce-ai.onrender.com (entrá a *Simulador de cliente* y escribí como si fueras un cliente). Corre en el plan gratuito de Render: si estuvo un rato sin visitas, la primera carga tarda alrededor de un minuto, y los pedidos de prueba se borran cuando el servicio se reinicia.
 
-![Bandeja del vendedor](docs/bandeja.png)
+![Un cliente pide un regalo, la IA arma el carrito, confirma el pedido y el pago aparece en el panel](docs/demo.gif)
 
 ## Probalo
 
@@ -16,9 +18,7 @@ npm run dev                           # http://localhost:3000
 
 Sin clave funciona igual, con el asistente de reglas.
 
-Entrá a **Simulador de cliente** y escribí como si fueras el cliente: "¿tenés termos?", "quiero 2 bombillas", "confirmar". Abrí el link de pago, pagá y mirá cómo se actualizan **Mensajes**, **Pedidos** y **Productos** en tiempo real.
-
-<img src="docs/simulador.png" alt="Simulador de cliente" width="640">
+Entrá a **Simulador de cliente** y escribí como si fueras el cliente: "busco un regalo para alguien que toma mate", "sumame el termo y una bombilla", "confirmo". Abrí el link de pago, pagá y mirá cómo se actualizan **Inicio**, **Mensajes** y **Pedidos** en tiempo real. El panel también se usa desde el celular.
 
 ## Cómo funciona
 
@@ -39,8 +39,10 @@ flowchart LR
 - **Siempre responde.** Si un modelo está saturado o sin cupo pasa al siguiente de `LLM_MODELS`. Si ninguno contesta, o se agotó el cupo diario (`LLM_DAILY_LIMIT`), responde el asistente de reglas (`server/agent.js`). Si la IA falla después de crear el pedido, el cliente igual recibe su link de pago.
 - **Mensajes en orden.** Los mensajes de un mismo cliente se procesan de a uno, así dos mensajes seguidos no se pisan el carrito.
 - **Stock consistente.** Confirmar un pedido descuenta el stock en una transacción con `UPDATE … WHERE stock >= ?`. Si dos clientes compran la última unidad a la vez, uno solo la consigue y al otro se le avisa.
+- **Pedidos que vencen.** Un pedido sin pagar vence a los `ORDER_TTL_MINUTES` (30 por defecto): devuelve el stock reservado, avisa al cliente por el chat y el link de pago deja de funcionar.
 - **Derivación a una persona.** Si el cliente lo pide o el asistente no entiende, la conversación queda marcada como "Espera respuesta". Si el vendedor apaga el asistente, todo lo nuevo le llega a él.
-- **Tiempo real con Server-Sent Events.** No usa WebSockets ni polling.
+- **Tiempo real con Server-Sent Events.** No usa WebSockets ni polling. Mientras la IA piensa, el cliente y el vendedor ven "escribiendo…".
+- **Inicio con las métricas del día.** Ventas cobradas, pendientes de cobro, chats, qué porcentaje respondió la IA, quién espera respuesta, lo más vendido y el stock bajo, calculado en SQL.
 - **Pagos idempotentes.** Una notificación de pago repetida no confirma dos veces.
 
 ## Stack
@@ -50,7 +52,7 @@ flowchart LR
 | Frontend | React 19 + Vite |
 | Backend | Node.js + Express 5 |
 | Base de datos | SQLite (`node:sqlite`, sin dependencias nativas) |
-| Tests | `node:test` |
+| Tests | `node:test` + GitHub Actions en cada push |
 
 Requiere Node.js 22.13 o posterior.
 
@@ -65,9 +67,9 @@ server/
   commerce.js   catálogo, pedidos y stock
   db.js         esquema y datos de ejemplo
 web/src/
-  views/        Mensajes, Pedidos, Productos y Simulador
+  views/        Inicio, Mensajes, Pedidos, Productos y Simulador
 test/
-  flow.test.js  flujo completo de venta
+  flow.test.js  venta completa, stock, vencimientos, métricas, concurrencia y agente con IA
 ```
 
 ## Scripts
@@ -75,7 +77,7 @@ test/
 | Comando | Qué hace |
 |---|---|
 | `npm run dev` | Servidor con recarga y Vite integrado en el mismo puerto |
-| `npm test` | Tests del flujo de venta, stock, duplicados, derivación y del agente con IA (con un modelo simulado) |
+| `npm test` | Tests de venta, stock, vencimientos, métricas, duplicados, derivación y del agente con IA (con un modelo simulado) |
 | `npm run build` | Compila el frontend en `web/dist` |
 | `npm start` | Producción: sirve la API y el frontend compilado |
 
@@ -85,18 +87,19 @@ Variables opcionales (se pueden poner en `.env`):
 |---|---|---|
 | `GEMINI_API_KEY` o `LLM_API_KEY` | (sin IA) | Clave del proveedor del modelo |
 | `LLM_BASE_URL` | API de Gemini compatible con OpenAI | Cambiar de proveedor |
-| `LLM_MODELS` | `gemini-3.5-flash,gemini-3.1-flash-lite,gemini-3-flash-preview` | Modelos a probar, en orden |
+| `LLM_MODELS` | `gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3-flash-preview` | Modelos a probar, en orden |
 | `LLM_DAILY_LIMIT` | `300` | Respuestas con IA por día; protege el cupo en una demo pública |
+| `ORDER_TTL_MINUTES` | `30` | Minutos hasta que vence un pedido impago |
 | `PORT` | `3000` | Puerto |
 | `PUBLIC_URL` | `http://localhost:3000` | Base de los links de pago |
 | `DB_FILE` | `data.db` | Archivo de SQLite |
 
 ## Próximos pasos
 
-- Respuestas en streaming e indicador de "escribiendo…".
+- Respuestas en streaming.
 - Envío real por WhatsApp Cloud API y verificación del webhook.
 - Mercado Pago Checkout Pro en lugar del checkout simulado.
-- Vencimiento de pedidos impagos para liberar el stock reservado.
+- Carga y edición de productos desde el panel.
 - Instagram y Messenger en la misma bandeja.
 
 ## Licencia

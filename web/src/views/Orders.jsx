@@ -1,5 +1,7 @@
 import { money, useData } from '../api.js';
 
+const STATUS = { pending: 'Pendiente de pago', paid: 'Pagado', expired: 'Vencido' };
+
 export default function Orders({ tick }) {
   const orders = useData('/api/orders', tick) ?? [];
   return (
@@ -30,7 +32,7 @@ export default function Orders({ tick }) {
                 <td>{o.items.map((i) => `${i.qty} × ${i.name}`).join(', ')}</td>
                 <td>{money(o.total)}</td>
                 <td>
-                  <span className={`status ${o.status}`}>{o.status === 'paid' ? 'Pagado' : 'Pendiente de pago'}</span>
+                  <span className={`status ${o.status}`}>{STATUS[o.status]}</span>
                 </td>
               </tr>
             ))}

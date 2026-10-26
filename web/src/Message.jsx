@@ -3,7 +3,8 @@ import { time } from './api.js';
 const AUTHOR = { customer: 'Cliente', ai: 'IA', agent: 'Vendedor' };
 
 function Linkified({ text }) {
-  return text.split(/(https?:\/\/\S+)/g).map((part, i) =>
+  // La puntuación final ("…/checkout/1.") no es parte del link.
+  return text.split(/(https?:\/\/\S+?)(?=[.,;:!?)]*(?:\s|$))/g).map((part, i) =>
     /^https?:\/\//.test(part) ? (
       <a key={i} href={part} target="_blank" rel="noreferrer">
         {part}
@@ -23,6 +24,16 @@ export function Message({ message, mine }) {
         <Linkified text={message.body} />
       </p>
       <span className="when">{time(message.created_at)}</span>
+    </div>
+  );
+}
+
+export function Typing({ mine }) {
+  return (
+    <div className={`bubble ai typing ${mine ? 'mine' : ''}`} aria-label="El asistente está escribiendo">
+      <span />
+      <span />
+      <span />
     </div>
   );
 }

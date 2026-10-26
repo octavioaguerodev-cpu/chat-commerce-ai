@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, time, useData } from '../api.js';
-import { Message } from '../Message.jsx';
+import { Message, Typing } from '../Message.jsx';
 import { useAutoScroll } from '../useAutoScroll.js';
 
 export default function Inbox({ tick }) {
@@ -9,7 +9,7 @@ export default function Inbox({ tick }) {
   const current = conversations.find((c) => c.id === selectedId);
   const messages = useData(current ? `/api/conversations/${current.id}/messages` : null, tick) ?? [];
   const [draft, setDraft] = useState('');
-  const scrollRef = useAutoScroll(messages.length);
+  const scrollRef = useAutoScroll(messages.length + (current?.typing ? 1 : 0));
 
   const send = async (e) => {
     e.preventDefault();
@@ -21,7 +21,7 @@ export default function Inbox({ tick }) {
   const toggleAi = () => api(`/api/conversations/${current.id}`, { method: 'PATCH', body: { ai_enabled: !current.ai_enabled } });
 
   return (
-    <div className="inbox">
+    <div className={`inbox ${current ? 'has-chat' : ''}`}>
       <aside>
         {conversations.length === 0 && <p className="empty">Todavía no hay chats. Escribí como cliente desde el Simulador.</p>}
         {conversations.map((c) => (
@@ -31,7 +31,7 @@ export default function Inbox({ tick }) {
               <small>{time(c.last_at)}</small>
             </span>
             <span className="row">
-              <span className="preview">{c.last_body}</span>
+              <span className="preview">{c.typing ? <i>escribiendo…</i> : c.last_body}</span>
               {c.needs_human ? <span className="badge">Espera respuesta</span> : null}
             </span>
           </button>
@@ -40,7 +40,10 @@ export default function Inbox({ tick }) {
       {current ? (
         <section className="chat">
           <header>
-            <div>
+            <button className="back" onClick={() => setSelectedId(null)} aria-label="Volver a los chats">
+              ←
+            </button>
+            <div className="title">
               <b>{current.name}</b> <small>+{current.phone}</small>
             </div>
             <label className="switch">
@@ -52,6 +55,7 @@ export default function Inbox({ tick }) {
             {messages.map((m) => (
               <Message key={m.id} message={m} mine={m.direction === 'out'} />
             ))}
+            {current.typing && <Typing mine />}
           </div>
           <form className="composer" onSubmit={send}>
             <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Responder como vendedor…" />

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, useData } from '../api.js';
-import { Message } from '../Message.jsx';
+import { Message, Typing } from '../Message.jsx';
 import { useAutoScroll } from '../useAutoScroll.js';
 
 const CUSTOMERS = [
@@ -34,7 +34,7 @@ export default function Simulator({ tick }) {
   const conversations = useData('/api/conversations', tick) ?? [];
   const conversation = conversations.find((c) => c.phone === customer.phone);
   const messages = useData(conversation ? `/api/conversations/${conversation.id}/messages` : null, tick) ?? [];
-  const scrollRef = useAutoScroll(messages.length);
+  const scrollRef = useAutoScroll(messages.length + (conversation?.typing ? 1 : 0));
 
   const send = async (text) => {
     if (!text.trim()) return;
@@ -58,6 +58,7 @@ export default function Simulator({ tick }) {
           {messages.map((m) => (
             <Message key={m.id} message={m} mine={m.direction === 'in'} />
           ))}
+          {conversation?.typing && <Typing />}
         </div>
         <div className="suggestions">
           {SUGGESTIONS.map((s) => (

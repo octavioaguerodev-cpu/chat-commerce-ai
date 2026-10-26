@@ -35,7 +35,7 @@ export function openDb(file = process.env.DB_FILE ?? 'data.db') {
       conversation_id INTEGER NOT NULL REFERENCES conversations(id),
       items TEXT NOT NULL,
       total INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'expired')),
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
       paid_at TEXT
     );
