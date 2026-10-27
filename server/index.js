@@ -3,6 +3,7 @@ import express from 'express';
 import { demoAgent } from './agent.js';
 import { createApp } from './app.js';
 import { openDb } from './db.js';
+import { seedDemoData } from './demo-data.js';
 import { createLlmAgent, openAiCompatible, withFallback } from './llm-agent.js';
 
 const env = process.env;
@@ -20,11 +21,19 @@ const agent = apiKey
         complete: openAiCompatible({ apiKey, models, baseUrl: env.LLM_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta/openai' }),
       }),
       demoAgent,
-      { dailyLimit: Number(env.LLM_DAILY_LIMIT ?? 300) },
+      { dailyLimit: Number(env.LLM_DAILY_LIMIT ?? 300), perConversation: Number(env.LLM_PER_CHAT_HOURLY ?? 20) },
     )
   : demoAgent;
 
-const { app, inbox } = createApp(openDb(), { publicUrl, agent });
+const db = openDb();
+if (env.DEMO_DATA === '1' && seedDemoData(db, publicUrl)) console.log('Datos de demo cargados');
+
+const { app, inbox } = createApp(db, {
+  publicUrl,
+  agent,
+  whatsapp: { appSecret: env.WHATSAPP_APP_SECRET, verifyToken: env.WHATSAPP_VERIFY_TOKEN },
+  webhookPerMinute: Number(env.WEBHOOK_PER_MINUTE ?? 30),
+});
 
 // Los pedidos impagos vencen y devuelven el stock reservado.
 const orderTtl = Number(env.ORDER_TTL_MINUTES ?? 30);

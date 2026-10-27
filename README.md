@@ -44,6 +44,8 @@ flowchart LR
 - **Tiempo real con Server-Sent Events.** No usa WebSockets ni polling. Mientras la IA piensa, el cliente y el vendedor ven "escribiendo…".
 - **Inicio con las métricas del día.** Ventas cobradas, pendientes de cobro, chats, qué porcentaje respondió la IA, quién espera respuesta, lo más vendido y el stock bajo, calculado en SQL.
 - **Pagos idempotentes.** Una notificación de pago repetida no confirma dos veces.
+- **Se ve qué hizo la IA.** En **Mensajes**, cada respuesta muestra las herramientas que usó ("buscó 'termo'", "sumó 2 × YER-1KG", "confirmó el pedido") y cuáles le rechazó el backend, por ejemplo por falta de stock. También avisa cuando respondió el asistente de reglas.
+- **Webhook protegido.** Con `WHATSAPP_APP_SECRET` solo acepta mensajes firmados por Meta (`X-Hub-Signature-256`, comparado en tiempo constante), y responde la verificación `GET` de Meta con `WHATSAPP_VERIFY_TOKEN`. Sin secreto (la demo con simulador) se limita por IP. Además, la IA tiene un cupo por cliente y por hora, así un solo número no gasta el cupo de todos.
 
 ## Stack
 
@@ -65,11 +67,14 @@ server/
   llm-agent.js  asistente con IA: herramientas, cliente del modelo y respaldo
   agent.js      asistente de reglas (sin API key)
   commerce.js   catálogo, pedidos y stock
-  db.js         esquema y datos de ejemplo
+  limit.js      límites por IP y por cliente
+  demo-data.js  conversaciones y pedidos de ejemplo para la demo pública
+  db.js         esquema y catálogo de ejemplo
 web/src/
   views/        Inicio, Mensajes, Pedidos, Productos y Simulador
 test/
-  flow.test.js  venta completa, stock, vencimientos, métricas, concurrencia y agente con IA
+  flow.test.js     venta completa, stock, vencimientos, métricas, concurrencia y agente con IA
+  webhook.test.js  firma de Meta, verificación, límite por IP y datos de demo
 ```
 
 ## Scripts
@@ -89,7 +94,12 @@ Variables opcionales (se pueden poner en `.env`):
 | `LLM_BASE_URL` | API de Gemini compatible con OpenAI | Cambiar de proveedor |
 | `LLM_MODELS` | `gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3-flash-preview` | Modelos a probar, en orden |
 | `LLM_DAILY_LIMIT` | `300` | Respuestas con IA por día; protege el cupo en una demo pública |
+| `LLM_PER_CHAT_HOURLY` | `20` | Respuestas con IA por cliente y por hora |
 | `ORDER_TTL_MINUTES` | `30` | Minutos hasta que vence un pedido impago |
+| `WHATSAPP_APP_SECRET` | (sin verificar) | Si está, el webhook solo acepta lo firmado por Meta |
+| `WHATSAPP_VERIFY_TOKEN` | (sin verificar) | Token para la verificación del webhook en Meta |
+| `WEBHOOK_PER_MINUTE` | `30` | Mensajes por minuto e IP al webhook sin firma |
+| `DEMO_DATA` | (no) | Con `1`, carga conversaciones y pedidos de ejemplo si la base está vacía |
 | `PORT` | `3000` | Puerto |
 | `PUBLIC_URL` | `http://localhost:3000` | Base de los links de pago |
 | `DB_FILE` | `data.db` | Archivo de SQLite |
@@ -97,7 +107,7 @@ Variables opcionales (se pueden poner en `.env`):
 ## Próximos pasos
 
 - Respuestas en streaming.
-- Envío real por WhatsApp Cloud API y verificación del webhook.
+- Envío real de respuestas por WhatsApp Cloud API.
 - Mercado Pago Checkout Pro en lugar del checkout simulado.
 - Carga y edición de productos desde el panel.
 - Instagram y Messenger en la misma bandeja.

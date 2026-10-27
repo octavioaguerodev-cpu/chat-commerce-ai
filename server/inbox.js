@@ -9,17 +9,19 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     'INSERT INTO conversations (phone, name) VALUES (?, ?) ON CONFLICT(phone) DO UPDATE SET name = excluded.name RETURNING *',
   );
   const insertMessage = db.prepare(
-    'INSERT OR IGNORE INTO messages (conversation_id, direction, author, body, wa_id) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO messages (conversation_id, direction, author, body, wa_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const getConversation = db.prepare('SELECT * FROM conversations WHERE id = ?');
   const saveState = db.prepare('UPDATE conversations SET cart = ?, needs_human = ? WHERE id = ?');
   const setNeedsHuman = db.prepare('UPDATE conversations SET needs_human = ? WHERE id = ?');
 
-  const listMessages = db.prepare('SELECT id, direction, author, body, created_at FROM messages WHERE conversation_id = ? ORDER BY id');
+  const listMessages = db.prepare('SELECT id, direction, author, body, meta, created_at FROM messages WHERE conversation_id = ? ORDER BY id');
   const getMessage = db.prepare('SELECT body FROM messages WHERE id = ?');
 
   // Salida a WhatsApp: en modo simulado el mensaje queda guardado y el simulador lo muestra.
-  const send = (conversationId, author, body) => insertMessage.run(conversationId, 'out', author, body, null);
+  // `meta` guarda quién respondió (IA o reglas) y qué herramientas usó, para el panel del vendedor.
+  const send = (conversationId, author, body, meta = null) =>
+    insertMessage.run(conversationId, 'out', author, body, null, meta && JSON.stringify(meta));
 
   // Un mensaje a la vez por conversación: dos mensajes seguidos no pisan el carrito del otro.
   const queues = new Map();
@@ -45,7 +47,7 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     emit('inbox');
     try {
       const result = await agent(db, conversation, getMessage.get(messageId).body, { publicUrl, history });
-      send(conversationId, 'ai', result.reply);
+      send(conversationId, 'ai', result.reply, { engine: result.engine ?? 'reglas', trace: result.trace ?? [] });
       saveState.run(JSON.stringify(result.cart), result.needsHuman ? 1 : 0, conversationId);
       if (result.order) emit('orders');
     } catch (err) {
@@ -61,7 +63,7 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     async receive({ phone, name, text, waId }) {
       const body = String(text).slice(0, MAX_BODY);
       const conversation = upsertConversation.get(phone, name || phone);
-      const inserted = insertMessage.run(conversation.id, 'in', 'customer', body, waId ?? null);
+      const inserted = insertMessage.run(conversation.id, 'in', 'customer', body, waId ?? null, null);
       if (inserted.changes === 0) {
         return { duplicate: true };
       }
@@ -120,6 +122,6 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
         .all()
         .map((c) => ({ ...c, typing: typing.has(c.id) })),
 
-    messages: (conversationId) => listMessages.all(conversationId),
+    messages: (conversationId) => listMessages.all(conversationId).map((m) => ({ ...m, meta: m.meta && JSON.parse(m.meta) })),
   };
 }

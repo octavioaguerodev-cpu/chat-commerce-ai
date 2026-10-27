@@ -135,7 +135,7 @@ test('agente LLM: opera el carrito y el pedido solo con las herramientas', async
     toolCall('confirmar_pedido'),
     text('Listo, tu pedido está confirmado.'),
   );
-  const { db, say, stock } = setup(createLlmAgent(model));
+  const { db, inbox, say, stock } = setup(createLlmAgent(model));
 
   assert.equal(await say('quiero 2 termos stanley y pagar'), 'Listo, tu pedido está confirmado.');
   const results = toolResults(model.calls.at(-1));
@@ -143,6 +143,18 @@ test('agente LLM: opera el carrito y el pedido solo con las herramientas', async
   assert.match(results[2], /"link_de_pago":"http:\/\/test\/checkout\/1"/);
   assert.equal(stock('TER-STA-1L'), 4);
   assert.equal(listOrders(db)[0].total, 178000);
+
+  const { meta } = inbox.messages(1).at(-1);
+  assert.equal(meta.engine, 'ia');
+  assert.deepEqual(
+    meta.trace.map((t) => [t.name, t.error ?? null]),
+    [
+      ['agregar_al_carrito', 'De Termo Stanley 1 L solo tenemos 6.'],
+      ['agregar_al_carrito', null],
+      ['confirmar_pedido', null],
+    ],
+    'el panel ve qué herramientas usó y cuál le rechazó el backend',
+  );
 });
 
 test('agente LLM: si falla después de crear el pedido, el cliente igual recibe el link', async () => {
@@ -161,4 +173,11 @@ test('si el LLM no responde o se agota el cupo diario, responde el agente de reg
   const limited = setup(withFallback(createLlmAgent(working), demoAgent, { dailyLimit: 0 }));
   assert.match(await limited.say('¿tenés bombillas?'), /Bombilla de acero/);
   assert.equal(working.calls.length, 0);
+
+  const chatty = scriptedModel(text('uno'), text('dos'));
+  const perChat = setup(withFallback(createLlmAgent(chatty), demoAgent, { dailyLimit: 100, perConversation: 1 }));
+  assert.equal(await perChat.say('hola'), 'uno');
+  assert.match(await perChat.say('¿tenés bombillas?'), /Bombilla de acero/, 'un solo cliente no se gasta el cupo de todos');
+  assert.equal(await perChat.say('hola', '5491100000002'), 'dos');
+  assert.equal(perChat.inbox.messages(1).at(-1).meta.engine, 'reglas');
 });

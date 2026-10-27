@@ -1,4 +1,5 @@
 import { addToCart, cartSummary, createOrder, listProducts, OutOfStockError, searchProducts } from './commerce.js';
+import { rateLimiter } from './limit.js';
 import { tokenize } from './text.js';
 
 const MAX_TOOL_ROUNDS = 8;
@@ -108,6 +109,9 @@ export function openAiCompatible({ baseUrl, apiKey, models }) {
 export function createLlmAgent({ complete }) {
   return async (db, conversation, text, { publicUrl, history = [] }) => {
     const state = { conversation, publicUrl, cart: JSON.parse(conversation.cart), needsHuman: false, order: undefined };
+    // Qué herramientas usó el modelo en este mensaje; el panel lo muestra al vendedor.
+    const trace = [];
+    const done = (reply) => ({ reply, cart: state.cart, needsHuman: state.needsHuman, order: state.order, engine: 'ia', trace });
     const messages = [
       {
         role: 'system',
@@ -125,16 +129,20 @@ export function createLlmAgent({ complete }) {
         messages.push(message);
         if (!message.tool_calls?.length) {
           if (!message.content?.trim()) throw new Error('El modelo respondió vacío');
-          return { reply: message.content.trim(), cart: state.cart, needsHuman: state.needsHuman, order: state.order };
+          return done(message.content.trim());
         }
         for (const call of message.tool_calls) {
+          const name = call.function.name;
+          let args = {};
           let result;
           try {
-            result = runTool(db, state, call.function.name, JSON.parse(call.function.arguments || '{}'));
+            args = JSON.parse(call.function.arguments || '{}');
+            result = runTool(db, state, name, args);
           } catch (err) {
             if (err instanceof SyntaxError) result = { error: 'Argumentos inválidos' };
             else throw err;
           }
+          trace.push({ name, args, error: result?.error });
           messages.push({ role: 'tool', tool_call_id: call.id, content: typeof result === 'string' ? result : JSON.stringify(result) });
         }
       }
@@ -143,23 +151,25 @@ export function createLlmAgent({ complete }) {
       // Si el pedido ya se creó, no lo perdemos: el cliente igual recibe su link de pago.
       if (!state.order) throw err;
       console.warn('El LLM falló después de crear el pedido:', err.message);
-      const link = `${publicUrl}/checkout/${state.order.id}`;
-      return { reply: `¡Pedido #${state.order.id} confirmado! Pagalo acá: ${link}`, cart: state.cart, needsHuman: state.needsHuman, order: state.order };
+      return done(`¡Pedido #${state.order.id} confirmado! Pagalo acá: ${publicUrl}/checkout/${state.order.id}`);
     }
   };
 }
 
 /**
- * Usa el LLM y, si falla o se agota el cupo diario, responde el agente de reglas.
- * ponytail: el cupo vive en memoria y se reinicia con el proceso; alcanza para proteger una demo pública.
+ * Usa el LLM y, si falla o se pasa algún cupo, responde el agente de reglas.
+ * Cupos: `dailyLimit` respuestas por día en total y `perConversation` por cliente y por hora,
+ * así un solo número no gasta el cupo de la demo.
+ * ponytail: los cupos viven en memoria y se reinician con el proceso; alcanza para una demo pública.
  */
-export function withFallback(primary, fallback, { dailyLimit }) {
+export function withFallback(primary, fallback, { dailyLimit, perConversation = Infinity }) {
   let day = '';
   let used = 0;
+  const perChat = rateLimiter(perConversation, 60 * 60_000);
   return async (db, conversation, text, ctx) => {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== day) [day, used] = [today, 0];
-    if (used < dailyLimit) {
+    if (used < dailyLimit && perChat(conversation.id)) {
       used++;
       try {
         return await primary(db, conversation, text, ctx);
@@ -167,6 +177,6 @@ export function withFallback(primary, fallback, { dailyLimit }) {
         console.warn('LLM no disponible, responde el agente de reglas:', err.message);
       }
     }
-    return fallback(db, conversation, text, ctx);
+    return { ...(await fallback(db, conversation, text, ctx)), engine: 'reglas' };
   };
 }

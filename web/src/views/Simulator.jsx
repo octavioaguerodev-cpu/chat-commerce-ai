@@ -31,6 +31,7 @@ const whatsappPayload = ({ name, phone }, text) => ({
 export default function Simulator({ tick }) {
   const [customer, setCustomer] = useState(CUSTOMERS[0]);
   const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
   const conversations = useData('/api/conversations', tick) ?? [];
   const conversation = conversations.find((c) => c.phone === customer.phone);
   const messages = useData(conversation ? `/api/conversations/${conversation.id}/messages` : null, tick) ?? [];
@@ -38,8 +39,13 @@ export default function Simulator({ tick }) {
 
   const send = async (text) => {
     if (!text.trim()) return;
-    await api('/webhook/whatsapp', { method: 'POST', body: whatsappPayload(customer, text) });
-    setDraft('');
+    try {
+      await api('/webhook/whatsapp', { method: 'POST', body: whatsappPayload(customer, text) });
+      setDraft('');
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
@@ -60,6 +66,7 @@ export default function Simulator({ tick }) {
           ))}
           {conversation?.typing && <Typing />}
         </div>
+        {error && <p className="error">{error}</p>}
         <div className="suggestions">
           {SUGGESTIONS.map((s) => (
             <button key={s} onClick={() => send(s)}>

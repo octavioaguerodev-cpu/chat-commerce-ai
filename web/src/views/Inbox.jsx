@@ -53,7 +53,7 @@ export default function Inbox({ tick }) {
           </header>
           <div className="messages" ref={scrollRef}>
             {messages.map((m) => (
-              <Message key={m.id} message={m} mine={m.direction === 'out'} />
+              <Message key={m.id} message={m} mine={m.direction === 'out'} showTrace />
             ))}
             {current.typing && <Typing mine />}
           </div>

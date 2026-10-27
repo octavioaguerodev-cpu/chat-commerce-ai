@@ -28,6 +28,7 @@ export function openDb(file = process.env.DB_FILE ?? 'data.db') {
       author TEXT NOT NULL CHECK (author IN ('customer', 'ai', 'agent')),
       body TEXT NOT NULL,
       wa_id TEXT UNIQUE,
+      meta TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
     CREATE TABLE IF NOT EXISTS orders (
@@ -40,6 +41,10 @@ export function openDb(file = process.env.DB_FILE ?? 'data.db') {
       paid_at TEXT
     );
   `);
+  // Bases creadas antes de guardar qué herramientas usó la IA.
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name = 'meta'").get()) {
+    db.exec('ALTER TABLE messages ADD COLUMN meta TEXT');
+  }
   if (!db.prepare('SELECT 1 FROM products LIMIT 1').get()) {
     const insert = db.prepare('INSERT INTO products (sku, name, keywords, price, stock) VALUES (?, ?, ?, ?, ?)');
     for (const p of products) insert.run(p.sku, p.name, p.keywords, p.price, p.stock);

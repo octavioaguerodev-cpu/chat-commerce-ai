@@ -1,6 +1,8 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { getOrder, getStats, listOrders, listProducts } from './commerce.js';
 import { createInbox } from './inbox.js';
+import { rateLimiter } from './limit.js';
 import { money } from './text.js';
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -21,17 +23,41 @@ function parseWhatsApp(payload) {
   return out;
 }
 
-export function createApp(db, { publicUrl, agent }) {
+/** Meta firma cada webhook con HMAC-SHA256 del cuerpo crudo usando el App Secret. */
+function validSignature(rawBody, header, appSecret) {
+  if (!rawBody || typeof header !== 'string') return false;
+  const expected = Buffer.from(`sha256=${createHmac('sha256', appSecret).update(rawBody).digest('hex')}`);
+  const received = Buffer.from(header);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+export function createApp(db, { publicUrl, agent, whatsapp = {}, webhookPerMinute = 30 }) {
   const clients = new Set();
   const emit = (type) => {
     for (const res of clients) res.write(`data: ${JSON.stringify({ type })}\n\n`);
   };
   const inbox = createInbox(db, { publicUrl, agent, emit });
+  const perIp = rateLimiter(webhookPerMinute, 60_000);
   const app = express();
-  app.use(express.json({ limit: '100kb' }));
+  app.set('trust proxy', 1); // Render pone un proxy adelante: req.ip es la IP real del cliente.
+  app.use(express.json({ limit: '100kb', verify: (req, res, buf) => (req.rawBody = buf) }));
 
+  // Verificación que hace Meta al registrar el webhook.
+  app.get('/webhook/whatsapp', (req, res) => {
+    const ok = whatsapp.verifyToken && req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === whatsapp.verifyToken;
+    if (!ok) return res.sendStatus(403);
+    res.type('text/plain').send(String(req.query['hub.challenge'] ?? ''));
+  });
+
+  // Con WHATSAPP_APP_SECRET solo entra lo firmado por Meta. Sin él (demo con simulador),
+  // el webhook es público y se limita por IP para que nadie gaste el cupo de la IA.
   // WhatsApp pide responder 200 rápido; la respuesta al cliente se procesa después.
   app.post('/webhook/whatsapp', (req, res) => {
+    if (whatsapp.appSecret) {
+      if (!validSignature(req.rawBody, req.get('x-hub-signature-256'), whatsapp.appSecret)) return res.sendStatus(401);
+    } else if (!perIp(req.ip)) {
+      return res.status(429).json({ error: 'Demasiados mensajes, esperá un minuto' });
+    }
     res.sendStatus(200);
     for (const message of parseWhatsApp(req.body)) {
       inbox.receive(message).catch((err) => console.error('No se pudo procesar el mensaje:', err));
