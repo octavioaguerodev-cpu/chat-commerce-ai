@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
-import { getOrder, getStats, listOrders, listProducts } from './commerce.js';
+import { deliveryText, getOrder, getStats, listOrders, listProducts } from './commerce.js';
 import { createInbox } from './inbox.js';
 import { rateLimiter } from './limit.js';
 import { money } from './text.js';
@@ -108,6 +108,7 @@ export function createApp(db, { publicUrl, agent, whatsapp = {}, webhookPerMinut
 button{width:100%;padding:12px;border:0;border-radius:8px;background:#009ee3;color:#fff;font-size:16px;cursor:pointer}
 .ok{color:#0a7d3b;font-weight:600}.expired{color:#c0392b;font-weight:600}small{color:#6b7785}</style>
 <div class="card"><small>Checkout simulado</small><h2>Pedido #${order.id}</h2><ul>${rows}</ul>
+${order.delivery ? `<p>${escapeHtml(deliveryText(order.delivery))}<br><small>A nombre de ${escapeHtml(order.delivery.nombre)}</small></p>` : ''}
 <p>Total: <b>${money(order.total)}</b></p>${action}</div></html>`);
   });
 

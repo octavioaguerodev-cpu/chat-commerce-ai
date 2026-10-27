@@ -44,6 +44,9 @@ test('consulta, carrito, pedido con reserva de stock y pago', async () => {
   assert.match(await say('quiero 2 termos stanley'), /Sumé 2 × Termo Stanley 1 L/);
   assert.match(await say('sumame tres bombillas'), /Total: \$\s?197\.500/);
 
+  assert.match(await say('confirmar'), /cómo lo recibís/, 'sin datos de entrega no hay pedido');
+  assert.equal(listOrders(db).length, 0);
+  assert.match(await say('envío a Av. Colón 1234, Córdoba'), /Anotado: Envío a Av\. Colón 1234, Córdoba, a nombre de Ana/);
   assert.match(await say('confirmar'), /http:\/\/test\/checkout\/1/);
   assert.equal(stock('TER-STA-1L'), 4);
   assert.equal(stock('BOM-ACE'), 27);
@@ -51,10 +54,17 @@ test('consulta, carrito, pedido con reserva de stock y pago', async () => {
   const [order] = listOrders(db);
   assert.equal(order.total, 197500);
   assert.equal(order.status, 'pending');
+  assert.deepEqual(order.delivery, { nombre: 'Ana', entrega: 'envio', direccion: 'Av. Colón 1234, Córdoba' });
+
+  await say('quiero 1 yerba');
+  assert.match(await say('confirmar'), /Pedido #2 confirmado!\n.*\n.*\nEnvío a Av\. Colón 1234/, 'el próximo pedido reusa los datos guardados');
+  assert.match(await say('¿hacen envío a Rosario?'), /./);
+  const saved = JSON.parse(db.prepare('SELECT delivery FROM conversations WHERE id = 1').get().delivery);
+  assert.equal(saved.direccion, 'Av. Colón 1234, Córdoba', 'una pregunta no cambia la dirección guardada');
 
   assert.equal(inbox.paymentApproved(order.id), true);
   assert.equal(inbox.paymentApproved(order.id), false, 'un pago repetido no se procesa dos veces');
-  assert.equal(listOrders(db)[0].status, 'paid');
+  assert.equal(listOrders(db).find((o) => o.id === order.id).status, 'paid');
   assert.match(inbox.messages(order.conversation_id).at(-1).body, /Recibimos tu pago/);
 });
 
@@ -68,7 +78,7 @@ test('no vende sin stock ni más de lo disponible', async () => {
 test('un pedido impago vence: devuelve el stock, avisa al cliente y ya no se puede pagar', async () => {
   const { db, inbox, say, stock } = setup();
   await say('quiero 2 kit matero completo');
-  await say('confirmar');
+  await say('confirmo, retiro en el local');
   assert.equal(stock('KIT-MAT'), 1);
 
   assert.equal(inbox.expireUnpaid(30), 0, 'un pedido recién creado no vence');
@@ -84,9 +94,9 @@ test('un pedido impago vence: devuelve el stock, avisa al cliente y ya no se pue
 test('métricas del día: ventas pagadas, pendientes y lo más vendido', async () => {
   const { db, inbox, say } = setup();
   await say('quiero 2 bombillas', '5491100000001');
-  await say('confirmar', '5491100000001');
+  await say('confirmo, retiro en el local', '5491100000001');
   await say('quiero 1 termo stanley', '5491100000002');
-  await say('confirmar', '5491100000002');
+  await say('confirmo, retiro en el local', '5491100000002');
   inbox.paymentApproved(1);
 
   const s = getStats(db);
@@ -102,8 +112,8 @@ test('el stock se valida otra vez al confirmar', async () => {
   const { say } = setup();
   await say('quiero 3 kit matero completo', '5491100000001');
   await say('quiero 2 kit matero completo', '5491100000002');
-  assert.match(await say('confirmar', '5491100000001'), /Pedido #1 confirmado/);
-  assert.match(await say('confirmar', '5491100000002'), /se acaba de agotar Kit matero completo/);
+  assert.match(await say('confirmo, retiro', '5491100000001'), /Pedido #1 confirmado/);
+  assert.match(await say('confirmo, retiro', '5491100000002'), /se acaba de agotar Kit matero completo/);
 });
 
 test('ignora webhooks duplicados y deriva a un humano', async () => {
@@ -128,21 +138,26 @@ test('mensajes seguidos del mismo cliente se responden en orden, sin pisar el ca
   assert.equal(JSON.parse(db.prepare('SELECT cart FROM conversations').get().cart).length, 2);
 });
 
-test('agente LLM: opera el carrito y el pedido solo con las herramientas', async () => {
+test('agente LLM: opera el carrito, los datos y el pedido solo con las herramientas', async () => {
   const model = scriptedModel(
     toolCall('agregar_al_carrito', { sku: 'TER-STA-1L', cantidad: 10 }),
     toolCall('agregar_al_carrito', { sku: 'TER-STA-1L', cantidad: 2 }),
+    toolCall('confirmar_pedido'),
+    toolCall('guardar_datos_cliente', { nombre: 'Ana Pérez', entrega: 'envio' }),
+    toolCall('guardar_datos_cliente', { nombre: 'Ana Pérez', entrega: 'retiro' }),
     toolCall('confirmar_pedido'),
     text('Listo, tu pedido está confirmado.'),
   );
   const { db, inbox, say, stock } = setup(createLlmAgent(model));
 
-  assert.equal(await say('quiero 2 termos stanley y pagar'), 'Listo, tu pedido está confirmado.');
+  assert.equal(await say('quiero 2 termos stanley, retiro yo, Ana Pérez'), 'Listo, tu pedido está confirmado.');
   const results = toolResults(model.calls.at(-1));
   assert.match(results[0], /solo tenemos 6/, 'el stock lo valida el backend, no el modelo');
-  assert.match(results[2], /"link_de_pago":"http:\/\/test\/checkout\/1"/);
+  assert.match(results[5], /"link_de_pago":"http:\/\/test\/checkout\/1"/);
   assert.equal(stock('TER-STA-1L'), 4);
-  assert.equal(listOrders(db)[0].total, 178000);
+  const [order] = listOrders(db);
+  assert.equal(order.total, 178000);
+  assert.deepEqual(order.delivery, { nombre: 'Ana Pérez', entrega: 'retiro' });
 
   const { meta } = inbox.messages(1).at(-1);
   assert.equal(meta.engine, 'ia');
@@ -151,6 +166,9 @@ test('agente LLM: opera el carrito y el pedido solo con las herramientas', async
     [
       ['agregar_al_carrito', 'De Termo Stanley 1 L solo tenemos 6.'],
       ['agregar_al_carrito', null],
+      ['confirmar_pedido', 'Faltan los datos de entrega: pedíselos al cliente y guardalos con guardar_datos_cliente.'],
+      ['guardar_datos_cliente', 'Para el envío falta la dirección completa (calle, número y ciudad).'],
+      ['guardar_datos_cliente', null],
       ['confirmar_pedido', null],
     ],
     'el panel ve qué herramientas usó y cuál le rechazó el backend',
@@ -158,7 +176,12 @@ test('agente LLM: opera el carrito y el pedido solo con las herramientas', async
 });
 
 test('agente LLM: si falla después de crear el pedido, el cliente igual recibe el link', async () => {
-  const model = scriptedModel(toolCall('agregar_al_carrito', { sku: 'BOM-ACE', cantidad: 1 }), toolCall('confirmar_pedido'), new Error('HTTP 503'));
+  const model = scriptedModel(
+    toolCall('agregar_al_carrito', { sku: 'BOM-ACE', cantidad: 1 }),
+    toolCall('guardar_datos_cliente', { nombre: 'Ana Pérez', entrega: 'retiro' }),
+    toolCall('confirmar_pedido'),
+    new Error('HTTP 503'),
+  );
   const { say, db } = setup(createLlmAgent(model));
   assert.match(await say('una bombilla y confirmo'), /Pedido #1 confirmado! Pagalo acá: http:\/\/test\/checkout\/1/);
   assert.equal(listOrders(db).length, 1);

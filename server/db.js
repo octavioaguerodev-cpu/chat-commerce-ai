@@ -19,7 +19,8 @@ export function openDb(file = process.env.DB_FILE ?? 'data.db') {
       name TEXT NOT NULL,
       ai_enabled INTEGER NOT NULL DEFAULT 1,
       needs_human INTEGER NOT NULL DEFAULT 0,
-      cart TEXT NOT NULL DEFAULT '[]'
+      cart TEXT NOT NULL DEFAULT '[]',
+      delivery TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY,
@@ -38,12 +39,15 @@ export function openDb(file = process.env.DB_FILE ?? 'data.db') {
       total INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'expired')),
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-      paid_at TEXT
+      paid_at TEXT,
+      delivery TEXT
     );
   `);
-  // Bases creadas antes de guardar qué herramientas usó la IA.
-  if (!db.prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name = 'meta'").get()) {
-    db.exec('ALTER TABLE messages ADD COLUMN meta TEXT');
+  // Columnas agregadas después de la primera versión: las bases viejas se actualizan solas.
+  for (const [table, column] of [['messages', 'meta'], ['conversations', 'delivery'], ['orders', 'delivery']]) {
+    if (!db.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+    }
   }
   if (!db.prepare('SELECT 1 FROM products LIMIT 1').get()) {
     const insert = db.prepare('INSERT INTO products (sku, name, keywords, price, stock) VALUES (?, ?, ?, ?, ?)');

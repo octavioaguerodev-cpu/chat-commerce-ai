@@ -12,7 +12,7 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     'INSERT OR IGNORE INTO messages (conversation_id, direction, author, body, wa_id, meta) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const getConversation = db.prepare('SELECT * FROM conversations WHERE id = ?');
-  const saveState = db.prepare('UPDATE conversations SET cart = ?, needs_human = ? WHERE id = ?');
+  const saveState = db.prepare('UPDATE conversations SET cart = ?, needs_human = ?, delivery = ? WHERE id = ?');
   const setNeedsHuman = db.prepare('UPDATE conversations SET needs_human = ? WHERE id = ?');
 
   const listMessages = db.prepare('SELECT id, direction, author, body, meta, created_at FROM messages WHERE conversation_id = ? ORDER BY id');
@@ -48,7 +48,9 @@ export function createInbox(db, { publicUrl, agent = demoAgent, emit = () => {} 
     try {
       const result = await agent(db, conversation, getMessage.get(messageId).body, { publicUrl, history });
       send(conversationId, 'ai', result.reply, { engine: result.engine ?? 'reglas', trace: result.trace ?? [] });
-      saveState.run(JSON.stringify(result.cart), result.needsHuman ? 1 : 0, conversationId);
+      // Los datos de entrega quedan guardados para el próximo pedido del mismo cliente.
+      const delivery = result.delivery === undefined ? conversation.delivery : result.delivery && JSON.stringify(result.delivery);
+      saveState.run(JSON.stringify(result.cart), result.needsHuman ? 1 : 0, delivery ?? null, conversationId);
       if (result.order) emit('orders');
     } catch (err) {
       console.error('Falló el agente:', err);

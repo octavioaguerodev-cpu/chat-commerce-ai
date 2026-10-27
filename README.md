@@ -18,7 +18,7 @@ npm run dev                           # http://localhost:3000
 
 Sin clave funciona igual, con el asistente de reglas.
 
-Entrá a **Simulador de cliente** y escribí como si fueras el cliente: "busco un regalo para alguien que toma mate", "sumame el termo y una bombilla", "confirmo". Abrí el link de pago, pagá y mirá cómo se actualizan **Inicio**, **Mensajes** y **Pedidos** en tiempo real. El panel también se usa desde el celular.
+Entrá a **Simulador de cliente** y escribí como si fueras el cliente: "busco un regalo para alguien que toma mate", "sumame el termo y una bombilla", "confirmo", y cuando te pida los datos, tu nombre y "retiro en el local" o "envío a" una dirección. Cada visitante es un cliente nuevo con su propio número. Abrí el link de pago, pagá y mirá cómo se actualizan **Inicio**, **Mensajes** y **Pedidos** en tiempo real. El panel también se usa desde el celular.
 
 ## Cómo funciona
 
@@ -34,10 +34,11 @@ flowchart LR
 ```
 
 - **Webhook con el formato de WhatsApp Cloud API.** El simulador manda exactamente el payload que manda Meta, así que conectar un número real no cambia el backend. Los mensajes repetidos se descartan por `wa_id`, porque WhatsApp reintenta los webhooks.
-- **La IA conversa; el backend decide.** El modelo opera solo con herramientas (`buscar_productos`, `agregar_al_carrito`, `confirmar_pedido`, `derivar_a_humano`…) definidas en `server/llm-agent.js`. Precios, stock y links de pago salen de la base, así que el modelo no puede inventar un precio ni vender sin stock: si pide 10 unidades y hay 6, la herramienta se lo rechaza.
+- **La IA conversa; el backend decide.** El modelo opera solo con herramientas (`buscar_productos`, `agregar_al_carrito`, `guardar_datos_cliente`, `confirmar_pedido`, `derivar_a_humano`…) definidas en `server/llm-agent.js`. Precios, stock y links de pago salen de la base, así que el modelo no puede inventar un precio ni vender sin stock: si pide 10 unidades y hay 6, la herramienta se lo rechaza.
 - **Proveedor intercambiable.** Habla con cualquier API compatible con OpenAI Chat Completions. Por defecto usa Gemini por su plan gratuito; para OpenAI o Groq alcanza con cambiar `LLM_BASE_URL`, `LLM_API_KEY` y `LLM_MODELS`.
 - **Siempre responde.** Si un modelo está saturado o sin cupo pasa al siguiente de `LLM_MODELS`. Si ninguno contesta, o se agotó el cupo diario (`LLM_DAILY_LIMIT`), responde el asistente de reglas (`server/agent.js`). Si la IA falla después de crear el pedido, el cliente igual recibe su link de pago.
 - **Mensajes en orden.** Los mensajes de un mismo cliente se procesan de a uno, así dos mensajes seguidos no se pisan el carrito.
+- **Datos de entrega antes de confirmar.** Sin nombre de quien recibe y forma de entrega (retiro en el local o envío con dirección) el backend no crea el pedido: la IA se los pide al cliente y los guarda con `guardar_datos_cliente`, que valida que el envío tenga dirección. Quedan guardados para el próximo pedido. El nombre de perfil de WhatsApp solo se usa para saludar.
 - **Stock consistente.** Confirmar un pedido descuenta el stock en una transacción con `UPDATE … WHERE stock >= ?`. Si dos clientes compran la última unidad a la vez, uno solo la consigue y al otro se le avisa.
 - **Pedidos que vencen.** Un pedido sin pagar vence a los `ORDER_TTL_MINUTES` (30 por defecto): devuelve el stock reservado, avisa al cliente por el chat y el link de pago deja de funcionar.
 - **Derivación a una persona.** Si el cliente lo pide o el asistente no entiende, la conversación queda marcada como "Espera respuesta". Si el vendedor apaga el asistente, todo lo nuevo le llega a él.

@@ -42,12 +42,15 @@ table { width: 100%; border-collapse: collapse; background: #fff; border-radius:
 th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eef1f4; }
 th { background: #f8fafb; font-size: 13px; color: #52606d; }
 td.out { color: #c0392b; font-weight: 600; }
-.status { padding: 2px 8px; border-radius: 999px; font-size: 13px; background: #fde8c8; color: #8a4b00; }
+.status { white-space: nowrap; padding: 2px 8px; border-radius: 999px; font-size: 13px; background: #fde8c8; color: #8a4b00; }
 .status.paid { background: #d4f4dd; color: #0a7d3b; }
 
 .simulator { display: flex; gap: 24px; padding: 24px; height: 100%; align-items: flex-start; }
 .phone { width: 400px; height: calc(100vh - 48px); max-height: 760px; display: flex; flex-direction: column; border: 1px solid #ccd5de; border-radius: 20px; overflow: hidden; background: #fff; }
-.phone header select { width: 100%; padding: 6px; border-radius: 6px; border: 1px solid #ccd5de; }
+.phone header.customer { gap: 8px; }
+.phone header.customer label { display: flex; flex-direction: column; font-size: 11px; color: #6b7785; flex: 1; }
+.phone header.customer input { padding: 6px; border-radius: 6px; border: 1px solid #ccd5de; font-size: 14px; }
+.phone header.customer button { border: 1px solid #ccd5de; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
 .suggestions button { border: 1px solid #ccd5de; background: #fff; border-radius: 999px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
 .hint { max-width: 320px; color: #52606d; line-height: 1.5; }

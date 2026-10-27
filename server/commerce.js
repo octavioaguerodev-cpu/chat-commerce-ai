@@ -40,8 +40,21 @@ export function cartSummary(db, cart) {
   return `${lines.map((l) => l.text).join('\n')}\nTotal: ${money(total)}`;
 }
 
-/** Crea el pedido y reserva el stock en una sola transacción. */
-export function createOrder(db, conversationId, cart) {
+/** Datos para entregar el pedido. Devuelve `{ delivery }` o `{ error }` con lo que falta. */
+export function validateDelivery({ nombre, entrega, direccion } = {}) {
+  const name = String(nombre ?? '').trim();
+  const address = String(direccion ?? '').trim();
+  if (name.length < 2) return { error: 'Falta el nombre de quien recibe el pedido.' };
+  if (entrega !== 'retiro' && entrega !== 'envio') return { error: 'Falta la forma de entrega: "retiro" en el local o "envio".' };
+  if (entrega === 'envio' && address.length < 6) return { error: 'Para el envío falta la dirección completa (calle, número y ciudad).' };
+  return { delivery: entrega === 'envio' ? { nombre: name, entrega, direccion: address } : { nombre: name, entrega } };
+}
+
+export const deliveryText = (d) => (d.entrega === 'envio' ? `Envío a ${d.direccion}` : 'Retiro en el local');
+
+/** Crea el pedido y reserva el stock en una sola transacción. Sin datos de entrega no hay pedido. */
+export function createOrder(db, conversationId, cart, delivery) {
+  if (!delivery) throw new Error('El pedido necesita datos de entrega');
   const take = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?');
   db.exec('BEGIN');
   try {
@@ -52,10 +65,10 @@ export function createOrder(db, conversationId, cart) {
     });
     const total = items.reduce((sum, i) => sum + i.price * i.qty, 0);
     const order = db
-      .prepare('INSERT INTO orders (conversation_id, items, total) VALUES (?, ?, ?) RETURNING *')
-      .get(conversationId, JSON.stringify(items), total);
+      .prepare('INSERT INTO orders (conversation_id, items, total, delivery) VALUES (?, ?, ?, ?) RETURNING *')
+      .get(conversationId, JSON.stringify(items), total, JSON.stringify(delivery));
     db.exec('COMMIT');
-    return { ...order, items };
+    return { ...order, items, delivery };
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
@@ -115,13 +128,15 @@ export function getStats(db) {
   return { sales, pending, replies, chats, waiting, topProducts, lowStock };
 }
 
+const parseOrder = (o) => ({ ...o, items: JSON.parse(o.items), delivery: o.delivery && JSON.parse(o.delivery) });
+
 export const getOrder = (db, id) => {
   const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-  return order && { ...order, items: JSON.parse(order.items) };
+  return order && parseOrder(order);
 };
 
 export const listOrders = (db) =>
   db
     .prepare('SELECT o.*, c.name AS customer, c.phone FROM orders o JOIN conversations c ON c.id = o.conversation_id ORDER BY o.id DESC')
     .all()
-    .map((o) => ({ ...o, items: JSON.parse(o.items) }));
+    .map(parseOrder);

@@ -1,4 +1,4 @@
-import { addToCart, cartSummary, createOrder, listProducts, OutOfStockError, searchProducts } from './commerce.js';
+import { addToCart, cartSummary, createOrder, deliveryText, listProducts, OutOfStockError, searchProducts, validateDelivery } from './commerce.js';
 import { rateLimiter } from './limit.js';
 import { tokenize } from './text.js';
 
@@ -14,8 +14,9 @@ Reglas:
 - Para sumar productos llamá a agregar_al_carrito con el sku exacto. Si no sabés el sku, buscá primero.
 - Nunca digas que sumaste, sacaste o confirmaste algo si no llamaste a la herramienta y te devolvió éxito.
 - El carrito real es el que figura abajo o el que devuelven las herramientas, no lo que se dijo antes en el chat.
+- Para confirmar hacen falta los datos de entrega: nombre y apellido de quien recibe y si retira en el local o es envío (con calle, número y ciudad). Pedíselos al cliente de forma natural, todo en un mismo mensaje, y guardalos con guardar_datos_cliente. Si ya figuran abajo, preguntá si siguen valiendo en vez de pedirlos de nuevo.
 - Confirmá el pedido solo cuando el cliente lo pida. El link de pago sale únicamente de confirmar_pedido; pasalo tal cual.
-- Si piden algo que no podés resolver (envíos, reclamos, descuentos, factura) o quieren hablar con una persona, usá derivar_a_humano.`;
+- Si piden algo que no podés resolver (costo o plazo de envío, reclamos, descuentos, factura) o quieren hablar con una persona, usá derivar_a_humano.`;
 
 const fn = (name, description, properties = {}, required = []) => ({
   type: 'function',
@@ -29,7 +30,17 @@ const TOOLS = [
   fn('ver_carrito', 'Muestra el carrito actual con subtotales y total.'),
   fn('agregar_al_carrito', 'Suma unidades de un producto al carrito, validando stock.', { sku: { type: 'string' }, cantidad: { type: 'integer' } }, ['sku', 'cantidad']),
   fn('quitar_del_carrito', 'Saca un producto del carrito.', { sku: { type: 'string' } }, ['sku']),
-  fn('confirmar_pedido', 'Crea el pedido con el carrito actual, reserva el stock y devuelve el link de pago.'),
+  fn(
+    'guardar_datos_cliente',
+    'Guarda los datos de entrega que dio el cliente. Hacen falta para confirmar el pedido.',
+    {
+      nombre: { type: 'string', description: 'Nombre y apellido de quien recibe' },
+      entrega: { type: 'string', enum: ['retiro', 'envio'] },
+      direccion: { type: 'string', description: 'Calle, número y ciudad. Solo para envío.' },
+    },
+    ['nombre', 'entrega'],
+  ),
+  fn('confirmar_pedido', 'Crea el pedido con el carrito y los datos de entrega guardados, reserva el stock y devuelve el link de pago.'),
   fn('derivar_a_humano', 'Avisa a una persona del equipo para que siga la conversación.', { motivo: { type: 'string' } }, ['motivo']),
 ];
 
@@ -58,13 +69,25 @@ function runTool(db, state, name, args) {
       state.cart = state.cart.filter((i) => i.productId !== product?.id);
       return state.cart.length ? cartSummary(db, state.cart) : 'El carrito quedó vacío.';
     }
+    case 'guardar_datos_cliente': {
+      const saved = validateDelivery(args);
+      if (saved.error) return { error: saved.error };
+      state.delivery = saved.delivery;
+      return `Datos guardados: ${saved.delivery.nombre}, ${deliveryText(saved.delivery)}.`;
+    }
     case 'confirmar_pedido': {
       if (!state.cart.length) return { error: 'El carrito está vacío.' };
+      if (!state.delivery) return { error: 'Faltan los datos de entrega: pedíselos al cliente y guardalos con guardar_datos_cliente.' };
       try {
         const summary = cartSummary(db, state.cart);
-        state.order = createOrder(db, state.conversation.id, state.cart);
+        state.order = createOrder(db, state.conversation.id, state.cart, state.delivery);
         state.cart = [];
-        return { pedido: state.order.id, resumen: summary, link_de_pago: `${state.publicUrl}/checkout/${state.order.id}` };
+        return {
+          pedido: state.order.id,
+          resumen: summary,
+          entrega: `${deliveryText(state.delivery)}, a nombre de ${state.delivery.nombre}`,
+          link_de_pago: `${state.publicUrl}/checkout/${state.order.id}`,
+        };
       } catch (err) {
         if (err instanceof OutOfStockError) return { error: `${err.product.name} ya no tiene stock suficiente (quedan ${err.product.stock}).` };
         throw err;
@@ -108,14 +131,24 @@ export function openAiCompatible({ baseUrl, apiKey, models }) {
 /** `complete(body) → message` es la llamada al modelo; inyectable para tests. */
 export function createLlmAgent({ complete }) {
   return async (db, conversation, text, { publicUrl, history = [] }) => {
-    const state = { conversation, publicUrl, cart: JSON.parse(conversation.cart), needsHuman: false, order: undefined };
+    const delivery = conversation.delivery && JSON.parse(conversation.delivery);
+    const state = { conversation, publicUrl, cart: JSON.parse(conversation.cart), delivery, needsHuman: false, order: undefined };
     // Qué herramientas usó el modelo en este mensaje; el panel lo muestra al vendedor.
     const trace = [];
-    const done = (reply) => ({ reply, cart: state.cart, needsHuman: state.needsHuman, order: state.order, engine: 'ia', trace });
+    const done = (reply) => ({
+      reply,
+      cart: state.cart,
+      delivery: state.delivery,
+      needsHuman: state.needsHuman,
+      order: state.order,
+      engine: 'ia',
+      trace,
+    });
+    const saved = state.delivery ? `${state.delivery.nombre}, ${deliveryText(state.delivery)}` : 'todavía no los dio';
     const messages = [
       {
         role: 'system',
-        content: `${SYSTEM}\n\nCliente: ${conversation.name}.\nCarrito actual:\n${state.cart.length ? cartSummary(db, state.cart) : 'vacío'}`,
+        content: `${SYSTEM}\n\nNombre de perfil de WhatsApp: ${conversation.name}.\nDatos de entrega guardados: ${saved}.\nCarrito actual:\n${state.cart.length ? cartSummary(db, state.cart) : 'vacío'}`,
       },
       ...history.slice(-HISTORY).map((m) => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: m.body })),
       { role: 'user', content: text },

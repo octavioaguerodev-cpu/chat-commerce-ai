@@ -16,6 +16,7 @@ export default function Orders({ tick }) {
               <th>#</th>
               <th>Cliente</th>
               <th>Productos</th>
+              <th>Entrega</th>
               <th>Total</th>
               <th>Estado</th>
             </tr>
@@ -28,8 +29,13 @@ export default function Orders({ tick }) {
                     {o.id}
                   </a>
                 </td>
-                <td>{o.customer}</td>
+                <td>
+                  {o.delivery?.nombre ?? o.customer}
+                  <br />
+                  <small>+{o.phone}</small>
+                </td>
                 <td>{o.items.map((i) => `${i.qty} × ${i.name}`).join(', ')}</td>
+                <td>{!o.delivery ? '—' : o.delivery.entrega === 'envio' ? `Envío a ${o.delivery.direccion}` : 'Retiro en el local'}</td>
                 <td>{money(o.total)}</td>
                 <td>
                   <span className={`status ${o.status}`}>{STATUS[o.status]}</span>

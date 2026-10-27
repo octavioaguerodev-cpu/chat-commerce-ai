@@ -1,14 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, useData } from '../api.js';
 import { Message, Typing } from '../Message.jsx';
 import { useAutoScroll } from '../useAutoScroll.js';
 
-const CUSTOMERS = [
-  { name: 'Ana', phone: '5491155550001' },
-  { name: 'Bruno', phone: '5491155550002' },
-  { name: 'Carla', phone: '5491155550003' },
-];
-const SUGGESTIONS = ['Hola', '¿Tenés termos?', 'Quiero 2 bombillas', 'Quiero un termo stanley', 'Confirmar', 'Quiero hablar con una persona'];
+const SUGGESTIONS = ['Hola', '¿Tenés termos?', 'Quiero 2 bombillas', 'Confirmar', 'Retiro en el local', 'Quiero hablar con una persona'];
+
+// Cada visitante de la demo es un cliente distinto, con su propio número: no comparten chat.
+const newCustomer = () => ({ name: 'Cliente', phone: `54911${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}` });
+
+function useCustomer() {
+  const [customer, setCustomer] = useState(() => JSON.parse(localStorage.getItem('simulator-customer') ?? 'null') ?? newCustomer());
+  useEffect(() => localStorage.setItem('simulator-customer', JSON.stringify(customer)), [customer]);
+  return [customer, setCustomer];
+}
 
 /** Arma el mismo payload que manda WhatsApp Cloud API a nuestro webhook. */
 const whatsappPayload = ({ name, phone }, text) => ({
@@ -29,7 +33,7 @@ const whatsappPayload = ({ name, phone }, text) => ({
 });
 
 export default function Simulator({ tick }) {
-  const [customer, setCustomer] = useState(CUSTOMERS[0]);
+  const [customer, setCustomer] = useCustomer();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const conversations = useData('/api/conversations', tick) ?? [];
@@ -51,14 +55,15 @@ export default function Simulator({ tick }) {
   return (
     <section className="simulator">
       <div className="phone">
-        <header>
-          <select value={customer.phone} onChange={(e) => setCustomer(CUSTOMERS.find((c) => c.phone === e.target.value))}>
-            {CUSTOMERS.map((c) => (
-              <option key={c.phone} value={c.phone}>
-                {c.name} (+{c.phone})
-              </option>
-            ))}
-          </select>
+        <header className="customer">
+          <label>
+            Nombre de perfil
+            <input value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} maxLength={40} />
+          </label>
+          <small>+{customer.phone}</small>
+          <button type="button" onClick={() => setCustomer(newCustomer())}>
+            Nuevo cliente
+          </button>
         </header>
         <div className="messages" ref={scrollRef}>
           {messages.map((m) => (
@@ -86,7 +91,7 @@ export default function Simulator({ tick }) {
         </form>
       </div>
       <p className="hint">
-        Cada mensaje entra por <code>POST /webhook/whatsapp</code> con el formato de WhatsApp Cloud API. Abrí <b>Mensajes</b> en otra pestaña para ver la bandeja del vendedor en tiempo real.
+        Sos un cliente nuevo con tu propio número. Cada mensaje entra por <code>POST /webhook/whatsapp</code> con el formato de WhatsApp Cloud API; el nombre de perfil es el que WhatsApp manda, y la IA te pide los datos de entrega antes de confirmar. Abrí <b>Mensajes</b> en otra pestaña para ver la bandeja del vendedor en tiempo real.
       </p>
     </section>
   );
